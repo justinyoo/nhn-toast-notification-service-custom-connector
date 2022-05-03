@@ -1,4 +1,4 @@
-# Provisions the API Management service instance and other relevant resources.
+# Provisions the Azure Functions app and other relevant resources.
 Param(
     [string]
     [Parameter(Mandatory=$false)]
@@ -97,33 +97,33 @@ Param(
     $AppInsightsIngestionMode = "LogAnalytics",
     ### Application Insights ###
 
-    ### API Management ###
+    ### Consumption Plan ###
+    [bool]
+    [Parameter(Mandatory=$false)]
+    $ConsumptionPlanIsLinux = $false,
+    ### Consumption Plan ###
+
+    ### Function App ###
     [string]
     [Parameter(Mandatory=$false)]
-    [ValidateSet("Consumption", "Isolated", "Developer", "Basic", "Standard", "Premium")]
-    $ApiManagementSkuName = "Consumption",
-
-    [int]
-    [Parameter(Mandatory=$false)]
-    $ApiManagementSkuCapacity = 0,
-
-    [string]
-    [Parameter(Mandatory=$false)]
-    $ApiManagementPublisherName = "",
+    [ValidateSet("Development", "Staging", "Production")]
+    $FunctionEnvironment = "Production",
 
     [string]
     [Parameter(Mandatory=$false)]
-    $ApiManagementPublisherEmail = "",
+    [ValidateSet("v3", "v4")]
+    $FunctionExtensionVersion = "v4",
 
     [string]
     [Parameter(Mandatory=$false)]
-    [ValidateSet("rawxml", "rawxml-link", "xml", "xml-link")]
-    $ApiManagementPolicyFormat = "rawxml-link",
+    [ValidateSet("dotnet", "dotnet-isolated", "java", "node", "poweshell", "python")]
+    $FunctionWorkerRuntime = "dotnet",
 
     [string]
     [Parameter(Mandatory=$false)]
-    $ApiManagementPolicyValue = "https://raw.githubusercontent.com/devrel-kr/nhn-toast-notification-service-custom-connector/main/infra/apim-global-policy.xml",
-    ### API Management ###
+    [ValidateSet("v6.0", "v8", "v11", "v12", "v14", "v16", "v3.7", "v3.8", "v3.9", "v7")]
+    $FunctionWorkerRuntimeVersion = "v6.0",
+    ### Function App ###
 
     [switch]
     [Parameter(Mandatory=$false)]
@@ -158,12 +158,12 @@ function Show-Usage {
             [-AppInsightsType <Application Insights type>] ``
             [-AppInsightsIngestionMode <Application Insights data ingestion mode>] ``
 
-            [-ApiManagementSkuName <API Management SKU name>] ``
-            [-ApiManagementSkuCapacity <API Management SKU capacity>] ``
-            [-ApiManagementPublisherName <API Management publisher name>] ``
-            [-ApiManagementPublisherEmail <API Management publisher email>] ``
-            [-ApiManagementPolicyFormat <API Management global policy format>] ``
-            [-ApiManagementPolicyValue <API Management global policy value>] ``
+            [-ConsumptionPlanIsLinux <`$true|`$false>] ``
+
+            [-FunctionEnvironment <Function App environment>] ``
+            [-FunctionExtensionVersion <Function App extension version>] ``
+            [-FunctionWorkerRuntime <Function App worker runtime>] ``
+            [-FunctionWorkerRuntimeVersion <Function App worker runtime version>] ``
 
             [-ProvisionedResults] ``
             [-WhatIf] ``
@@ -195,22 +195,17 @@ function Show-Usage {
         -AppInsightsIngestionMode         Application Insights data ingestion
                                           mode. Default is 'ApplicationInsights'.
 
-        -ApiManagementSkuName             API Management SKU name.
-                                          Default is 'Consumption'.
-        -ApiManagementSkuCapacity         API Management SKU capacity.
-                                          Default is 0.
-        -ApiManagementPublisherName       API Management publisher name.
-                                          Default is empty string.
-                                          If -ProvisionApiMangement is `$true,
-                                          this parameter must have a value.
-        -ApiManagementPublisherEmail      API Management publisher email.
-                                          Default is empty string.
-                                          If -ProvisionApiMangement is `$true,
-                                          this parameter must have a value.
-        -ApiManagementPolicyFormat        API Management API format.
-                                          Default is 'rawxml-link'.
-        -ApiManagementPolicyValue         API Management API value.
-                                          Default is 'https://raw.githubusercontent.com/devrel-kr/nhn-toast-notification-service-custom-connector/main/infra/apim-global-policy.xml'.
+        -ConsumptionPlanIsLinux           To enable Linux Consumption Plan
+                                          or not. Default is `$false.
+
+        -FunctionEnvironment              Function App environment.
+                                          Default is 'Production'.
+        -FunctionExtensionVersion         Function App extension version.
+                                          Default is 'v4'.
+        -FunctionWorkerRuntime            Function App worker runtime.
+                                          Default is 'dotnet'.
+        -FunctionWorkerRuntimeVersion     Function App worker runtime version.
+                                          Default is 'v6.0'.
 
         -ProvisionedResults               Show provisioned results.
         -WhatIf:                          Show what would happen without
@@ -223,11 +218,6 @@ function Show-Usage {
 
 # Show usage
 $needHelp = ($DeploymentName -eq "") -or ($ResourceGroupName -eq "") -or ($ResourceName -eq "") -or ($Help -eq $true)
-if ($needHelp -eq $true) {
-    Show-Usage
-    Exit 0
-}
-$needHelp = ($ApiManagementPublisherName -eq "") -or ($ApiManagementPublisherEmail -eq "")
 if ($needHelp -eq $true) {
     Show-Usage
     Exit 0
@@ -249,12 +239,12 @@ $params = @{
     appInsightsType = @{ value = $AppInsightsType };
     appInsightsIngestionMode = @{ value = $AppInsightsIngestionMode };
 
-    apiMgmtSkuName = @{ value = $ApiManagementSkuName };
-    apiMgmtSkuCapacity = @{ value = $ApiManagementSkuCapacity };
-    apiMgmtPublisherName = @{ value = $ApiManagementPublisherName };
-    apiMgmtPublisherEmail = @{ value = $ApiManagementPublisherEmail };
-    apiMgmtPolicyFormat = @{ value = $ApiManagementPolicyFormat };
-    apiMgmtPolicyValue = @{ value = $ApiManagementPolicyValue };
+    consumptionPlanIsLinux = @{ value = $ConsumptionPlanIsLinux };
+
+    functionEnvironment = @{ value = $FunctionEnvironment };
+    functionExtensionVersion = @{ value = $FunctionExtensionVersion };
+    functionWorkerRuntime = @{ value = $FunctionWorkerRuntime };
+    functionWorkerVersion = @{ value = $FunctionWorkerRuntimeVersion };
 }
 
 # Uncomment to debug
@@ -268,19 +258,19 @@ $stringified = $params | ConvertTo-Json -Compress | ConvertTo-Json
 if ($WhatIf -eq $true) {
     Write-Output "[$(Get-Date -Format "yyyy-MM-dd HH:mm:ss")] Provisioning resources as a test ..."
     $provisioned = az deployment group create -n $DeploymentName -g $ResourceGroupName `
-        -f ./provision-apiManagement.bicep `
+        -f ./provision-functionApp.bicep `
         -p $stringified `
         -w
 
-        # -u https://raw.githubusercontent.com/devrel-kr/nhn-toast-notification-service-custom-connector/main/infra/provision-apiManagement.json `
+        # -u https://raw.githubusercontent.com/devrel-kr/nhn-toast-notification-service-custom-connector/main/infra/provision-functionApp.json `
 } else {
     Write-Output "[$(Get-Date -Format "yyyy-MM-dd HH:mm:ss")] Provisioning resources ..."
     $provisioned = az deployment group create -n $DeploymentName -g $ResourceGroupName `
-        -f ./provision-apiManagement.bicep `
+        -f ./provision-functionApp.bicep `
         -p $stringified `
         --verbose
 
-        # -u https://raw.githubusercontent.com/devrel-kr/nhn-toast-notification-service-custom-connector/main/infra/provision-apiManagement.json `
+        # -u https://raw.githubusercontent.com/devrel-kr/nhn-toast-notification-service-custom-connector/main/infra/provision-functionApp.json `
 
     if ($ProvisionedResults -eq $true) {
         Write-Output $provisioned
